@@ -1,0 +1,72 @@
+# Define the path to the input and output files
+$inputFile = "C:\users\%USER%\Documents\RDAPinput.txt"
+$outputFile = "C:\users\%USER%\Documents\RDAPoutput.txt"
+
+# Function to get the RDAP endpoint for a given domain
+function Get-RDAPEndpoint {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$domain
+    )
+
+    # Extract the TLD from the domain
+    $tld = $domain.Split('.')[-1]
+
+    # Query the IANA bootstrap service for RDAP
+    $bootstrapData = Invoke-RestMethod -Uri "https://data.iana.org/rdap/dns.json"
+
+    # Find the RDAP endpoint for the given TLD
+    foreach ($service in $bootstrapData.services) {
+        # Check if the TLD list contains the desired TLD
+        if ($tld -in $service[0]) {
+            return $service[1][0]
+        }
+    }
+    throw "RDAP service not found for TLD: $tld"
+}
+
+# Read domains from the file
+$domains = Get-Content $inputFile
+
+# Check if the output file exists, create it if not
+if (-not (Test-Path $outputFile)) {
+    New-Item -Path $outputFile -ItemType File
+} else {
+    Clear-Content $outputFile
+}
+
+# Loop through each domain
+foreach ($domain in $domains) {
+    # Get the RDAP endpoint for the domain
+    try {
+        $rdapServerUrl = Get-RDAPEndpoint -domain $domain
+    } catch {
+        Write-Host "Error finding RDAP service for domain ${domain}: $_"
+        "${domain}: RDAP service not found" | Out-File $outputFile -Append
+        continue
+    }
+
+    # Construct the RDAP query URL
+    $rdapUrl = "$rdapServerUrl/domain/$domain"
+
+    # Perform the RDAP query and output the JSON response
+    try {
+        $response = Invoke-RestMethod -Uri $rdapUrl -ErrorAction Stop
+        $jsonString = $response | ConvertTo-Json -Depth 10
+        Write-Host "Formatted JSON for ${domain}:`n$jsonString"
+
+        # Determine the registration status
+        $status = "Registered"
+    } catch {
+        $status = "Error or Not Registered"
+        $jsonString = "Error: $_"
+    }
+
+    # Output status to console and file
+    Write-Host "${domain}: $status"
+    "${domain}: $status`n$jsonString" | Out-File $outputFile -Append
+}
+
+
+# Call the debugging function
+Print-BootstrapServices
